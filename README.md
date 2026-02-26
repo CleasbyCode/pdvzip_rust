@@ -37,21 +37,21 @@ There is also a [***Web edition***](https://cleasbycode.co.uk/pdvzip/app/), whic
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ cargo build --release
 
-Build complete. Binary at 'target/release/pdvzip'.
+Build complete. Binary at 'target/release/pdvzip_rs'.
 
-$ sudo cp target/release/pdvzip /usr/bin 
-$ pdvzip
+$ sudo cp target/release/pdvzip_rs /usr/bin 
+$ pdvzip_rs
 
-Usage: pdvzip <cover_image> <zip/jar>
-       pdvzip --info
+Usage: pdvzip_rs <cover_image> <zip/jar>
+       pdvzip_rs --info
 
-$ pdvzip my_cover_image.png document_pdf.zip
+$ pdvzip_rs my_cover_image.png document_pdf.zip
 
 Created PNG-ZIP polyglot image file: pzip_55183.png (4038367 bytes).
 
 Complete!
 
-$ pdvzip my_cover_image.png hello_world.jar
+$ pdvzip_rs my_cover_image.png hello_world.jar
 
 Created PNG-JAR polyglot image file: pjar_19662.png (1016336 bytes).
 
@@ -126,7 +126,7 @@ The ***command-line arguments*** will be added to the ***Linux/Windows*** extrac
 
 Make sure to enclose arguments containing spaces, such as file & directory names, within "quotation" marks. e.g.
 ```console
-$ ./pdvzip my_cover_image.png jdvrif_linux_executable.zip
+$ ./pdvzip_rs my_cover_image.png jdvrif_linux_executable.zip
 
 For this file type you can provide command-line arguments here, if required.
 
