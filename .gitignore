@@ -1,1 +1,22 @@
-/target
+# Cargo build outputs
+/target/
+/fuzz/target/
+
+# cargo-fuzz runtime outputs (keep corpus tracked)
+/fuzz/artifacts/
+/fuzz/coverage/
+/fuzz/crashes/
+
+# Generated polyglot output files
+/pzip_*.png
+/pjar_*.png
+
+# Coverage/profiling artifacts
+*.profraw
+
+# Editor/OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

@@ -1,17 +1,12 @@
 [package]
-name = "pdvzip"
-version = "4.3.0"
+name = "pdvzip_rs"
+version = "0.1.0"
 edition = "2024"
-authors = ["Nicholas Cleasby (@CleasbyCode)"]
-description = "PNG Data Vehicle ZIP/JAR Edition - Embed ZIP/JAR within PNG images"
 
 [dependencies]
-png = "0.17"
-crc32fast = "1"
-rand = "0.9"
-anyhow = "1"
+crc32fast = "1.5"
+png = "0.17.16"
 
 [profile.release]
-opt-level = 3
 lto = true
-strip = true
+codegen-units = 1
