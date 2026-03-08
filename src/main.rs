@@ -108,7 +108,7 @@ fn collect_user_arguments(file_type: FileType) -> Result<UserArguments, String> 
 fn print_info() {
     print!(
         r#"
-PNG Data Vehicle ZIP/JAR Edition (PDVZIP v4.3).
+PNG Data Vehicle ZIP/JAR Edition (PDVZIP v4.4).
 Created by Nicholas Cleasby (@CleasbyCode) 6/08/2022.
 
 Use PDVZIP to embed a ZIP/JAR file within a PNG image,
