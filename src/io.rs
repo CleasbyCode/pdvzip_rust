@@ -1,5 +1,5 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,7 +13,6 @@ pub enum FileTypeCheck {
 
 const CHUNK_FIELDS_COMBINED_LENGTH: usize = 12;
 const IDAT_MARKER_BYTES: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54];
-const IDAT_CRC_BYTES: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 const ARCHIVE_SIG: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
 
 pub fn has_valid_filename(path: &Path) -> bool {
@@ -28,28 +27,24 @@ pub fn has_valid_filename(path: &Path) -> bool {
         return false;
     }
 
-    filename
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'@' | b'%'))
+    !filename.chars().any(char::is_control)
 }
 
 pub fn has_file_extension(path: &Path, exts: &[&str]) -> bool {
     let ext = path
         .extension()
         .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
+        .unwrap_or_default();
     exts.iter().any(|candidate| {
-        let candidate = candidate.trim_start_matches('.').to_ascii_lowercase();
-        ext == candidate
+        let candidate = candidate.trim_start_matches('.');
+        ext.eq_ignore_ascii_case(candidate)
     })
 }
 
 pub fn read_file(path: &Path, file_type: FileTypeCheck) -> IoResult<Vec<u8>> {
     if !has_valid_filename(path) {
         return Err(
-            "Invalid Input Error: Unsupported characters in filename arguments.".to_string(),
+            "Invalid Input Error: Filename contains unsupported control characters.".to_string(),
         );
     }
 
@@ -70,11 +65,13 @@ pub fn read_file(path: &Path, file_type: FileTypeCheck) -> IoResult<Vec<u8>> {
     if file_size == 0 {
         return Err("Error: File is empty.".to_string());
     }
+    let file_size = usize::try_from(file_size)
+        .map_err(|_| "Error: File is too large to process on this platform.".to_string())?;
 
     match file_type {
         FileTypeCheck::CoverImage => {
-            const MINIMUM_IMAGE_SIZE: u64 = 87;
-            const MAX_IMAGE_SIZE: u64 = 4 * 1024 * 1024;
+            const MINIMUM_IMAGE_SIZE: usize = 87;
+            const MAX_IMAGE_SIZE: usize = 4 * 1024 * 1024;
 
             if !has_file_extension(path, &[".png"]) {
                 return Err(
@@ -90,8 +87,8 @@ pub fn read_file(path: &Path, file_type: FileTypeCheck) -> IoResult<Vec<u8>> {
             }
         }
         FileTypeCheck::ArchiveFile => {
-            const MAX_ARCHIVE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
-            const MINIMUM_ARCHIVE_SIZE: u64 = 30;
+            const MAX_ARCHIVE_SIZE: usize = 2 * 1024 * 1024 * 1024;
+            const MINIMUM_ARCHIVE_SIZE: usize = 30;
 
             if !has_file_extension(path, &[".zip", ".jar"]) {
                 return Err("Archive File Error: Invalid file extension. Only expecting \".zip\" or \".jar\".".to_string());
@@ -105,22 +102,39 @@ pub fn read_file(path: &Path, file_type: FileTypeCheck) -> IoResult<Vec<u8>> {
         }
     }
 
-    let mut data = fs::read(path).map_err(|err| format!("Failed to read full file: {err}"))?;
+    let mut file = File::open(path).map_err(|err| format!("Failed to open file: {err}"))?;
 
-    if file_type == FileTypeCheck::ArchiveFile {
-        let mut wrapped = Vec::<u8>::with_capacity(data.len() + CHUNK_FIELDS_COMBINED_LENGTH);
-        wrapped.extend_from_slice(&IDAT_MARKER_BYTES);
-        wrapped.append(&mut data);
-        wrapped.extend_from_slice(&IDAT_CRC_BYTES);
+    let wrap_archive = file_type == FileTypeCheck::ArchiveFile;
+    let prefix_size = if wrap_archive {
+        IDAT_MARKER_BYTES.len()
+    } else {
+        0
+    };
+    let buffer_size = if wrap_archive {
+        file_size
+            .checked_add(CHUNK_FIELDS_COMBINED_LENGTH)
+            .ok_or_else(|| "Archive File Error: Wrapped archive size overflow.".to_string())?
+    } else {
+        file_size
+    };
 
-        if wrapped.len() < 12 || wrapped[8..12] != ARCHIVE_SIG {
+    let mut data = vec![0u8; buffer_size];
+    if wrap_archive {
+        data[..prefix_size].copy_from_slice(&IDAT_MARKER_BYTES);
+    }
+
+    file.read_exact(&mut data[prefix_size..prefix_size + file_size])
+        .map_err(|_| "Failed to read full file: partial read".to_string())?;
+
+    if wrap_archive {
+        if data.len() < prefix_size + ARCHIVE_SIG.len()
+            || data[prefix_size..prefix_size + ARCHIVE_SIG.len()] != ARCHIVE_SIG
+        {
             return Err(
                 "Archive File Error: Signature check failure. Not a valid archive file."
                     .to_string(),
             );
         }
-
-        data = wrapped;
     }
 
     Ok(data)
@@ -169,7 +183,8 @@ pub fn write_polyglot_file(
     if let Some(path) = output_path {
         if !has_valid_filename(path) {
             return Err(
-                "Invalid Input Error: Unsupported characters in filename arguments.".to_string(),
+                "Invalid Input Error: Filename contains unsupported control characters."
+                    .to_string(),
             );
         }
         if !has_file_extension(path, &[".png"]) {
@@ -252,7 +267,8 @@ mod tests {
     #[test]
     fn filename_and_extension_checks() {
         assert!(has_valid_filename(Path::new("face_img.png")));
-        assert!(!has_valid_filename(Path::new("bad name.png")));
+        assert!(has_valid_filename(Path::new("bad name.png")));
+        assert!(!has_valid_filename(Path::new("bad\nname.png")));
         assert!(has_file_extension(Path::new("A/FILE.ZIP"), &[".zip"]));
         assert!(has_file_extension(Path::new("demo.JaR"), &["zip", "jar"]));
     }

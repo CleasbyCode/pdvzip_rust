@@ -1,3 +1,4 @@
+use crate::binary_utils::{ByteOrder, read_value_at};
 use crate::types::{EXTENSION_LIST, FileType};
 
 pub type ArchiveResult<T> = Result<T, String>;
@@ -8,23 +9,16 @@ const ZIP_LOCAL_SIG: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
 const CENTRAL_SIG: [u8; 4] = [0x50, 0x4B, 0x01, 0x02];
 const EOCD_SIG: [u8; 4] = [0x50, 0x4B, 0x05, 0x06];
 
-fn read_le16(data: &[u8], index: usize) -> ArchiveResult<u16> {
-    if index > data.len() || 2 > (data.len() - index) {
-        return Err("Archive File Error: Truncated ZIP record.".to_string());
-    }
-    Ok(u16::from_le_bytes([data[index], data[index + 1]]))
+fn read_le16(data: &[u8], offset: usize, context: &str) -> ArchiveResult<u16> {
+    read_value_at(data, offset, 2, ByteOrder::Little)
+        .map(|value| value as u16)
+        .map_err(|_| format!("{context}: Truncated ZIP record."))
 }
 
-fn read_le32(data: &[u8], index: usize) -> ArchiveResult<u32> {
-    if index > data.len() || 4 > (data.len() - index) {
-        return Err("Archive File Error: Truncated ZIP record.".to_string());
-    }
-    Ok(u32::from_le_bytes([
-        data[index],
-        data[index + 1],
-        data[index + 2],
-        data[index + 3],
-    ]))
+fn read_le32(data: &[u8], offset: usize, context: &str) -> ArchiveResult<u32> {
+    read_value_at(data, offset, 4, ByteOrder::Little)
+        .map(|value| value as u32)
+        .map_err(|_| format!("{context}: Truncated ZIP record."))
 }
 
 fn parse_first_zip_filename(archive_data: &[u8]) -> ArchiveResult<String> {
@@ -45,8 +39,9 @@ fn parse_first_zip_filename(archive_data: &[u8]) -> ArchiveResult<String> {
         return Err("Archive File Error: Missing ZIP local file header signature.".to_string());
     }
 
-    let filename_length = read_le16(archive_data, FILENAME_LENGTH_INDEX)? as usize;
-    let extra_length = read_le16(archive_data, EXTRA_LENGTH_INDEX)? as usize;
+    let filename_length =
+        read_le16(archive_data, FILENAME_LENGTH_INDEX, "Archive File Error")? as usize;
+    let extra_length = read_le16(archive_data, EXTRA_LENGTH_INDEX, "Archive File Error")? as usize;
 
     if filename_length < FIRST_FILENAME_MIN_LENGTH {
         return Err(
@@ -96,6 +91,10 @@ fn is_unsafe_entry_path(path: &str) -> bool {
         return true;
     }
 
+    if path.starts_with("//") || path.starts_with("\\\\") {
+        return true;
+    }
+
     path.split(['/', '\\']).any(|segment| segment == "..")
 }
 
@@ -122,7 +121,7 @@ fn find_end_of_central_directory(archive_data: &[u8]) -> ArchiveResult<usize> {
         if archive_data[pos..pos + EOCD_SIG.len()] == EOCD_SIG
             && pos + EOCD_MIN_SIZE <= archive_data.len()
         {
-            let comment_length = read_le16(archive_data, pos + 20)? as usize;
+            let comment_length = read_le16(archive_data, pos + 20, "Archive File Error")? as usize;
             let eocd_end = pos
                 .checked_add(EOCD_MIN_SIZE)
                 .and_then(|v| v.checked_add(comment_length))
@@ -219,24 +218,14 @@ pub fn validate_archive_entry_paths(archive_data: &[u8]) -> ArchiveResult<()> {
 
     let eocd_index = find_end_of_central_directory(archive_data)?;
 
-    let disk_number = read_le16(archive_data, eocd_index + 4)?;
-    let central_disk = read_le16(archive_data, eocd_index + 6)?;
-    if disk_number != 0 || central_disk != 0 {
-        return Err("Archive File Error: Multi-disk ZIP archives are not supported.".to_string());
-    }
-
-    let records_on_disk = read_le16(archive_data, eocd_index + 8)?;
-    let total_records = read_le16(archive_data, eocd_index + 10)?;
-    let central_size = read_le32(archive_data, eocd_index + 12)?;
-    let central_offset = read_le32(archive_data, eocd_index + 16)?;
+    let total_records = read_le16(archive_data, eocd_index + 10, "Archive File Error")?;
+    let central_size = read_le32(archive_data, eocd_index + 12, "Archive File Error")?;
+    let central_offset = read_le32(archive_data, eocd_index + 16, "Archive File Error")?;
 
     if total_records == 0 {
         return Err(
             "Archive File Error: Archive contains no central directory entries.".to_string(),
         );
-    }
-    if records_on_disk != total_records {
-        return Err("Archive File Error: Mismatched central directory record counts.".to_string());
     }
     if total_records == u16::MAX || central_size == u32::MAX || central_offset == u32::MAX {
         return Err("Archive File Error: ZIP64 archives are not supported.".to_string());
@@ -268,9 +257,9 @@ pub fn validate_archive_entry_paths(archive_data: &[u8]) -> ArchiveResult<()> {
             );
         }
 
-        let name_length = read_le16(archive_data, cursor + 28)? as usize;
-        let extra_length = read_le16(archive_data, cursor + 30)? as usize;
-        let comment_length = read_le16(archive_data, cursor + 32)? as usize;
+        let name_length = read_le16(archive_data, cursor + 28, "Archive File Error")? as usize;
+        let extra_length = read_le16(archive_data, cursor + 30, "Archive File Error")? as usize;
+        let comment_length = read_le16(archive_data, cursor + 32, "Archive File Error")? as usize;
 
         let name_start = cursor + CENTRAL_RECORD_NAME_INDEX;
         let name_end = name_start.checked_add(name_length).ok_or_else(|| {
@@ -318,6 +307,12 @@ pub fn validate_archive_entry_paths(archive_data: &[u8]) -> ArchiveResult<()> {
         }
 
         cursor += record_size;
+    }
+
+    if cursor != central_end {
+        return Err(
+            "Archive File Error: Central directory size does not match parsed records.".to_string(),
+        );
     }
 
     Ok(())

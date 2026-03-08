@@ -48,23 +48,6 @@ fn parse_cli(args: &[String], program_name: &str) -> Result<Command, String> {
     }))
 }
 
-fn has_balanced_quotes(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let mut single_count = 0usize;
-    let mut double_count = 0usize;
-
-    for (i, b) in bytes.iter().enumerate() {
-        let escaped = i > 0 && bytes[i - 1] == b'\\';
-        if *b == b'\'' && !escaped {
-            single_count += 1;
-        } else if *b == b'"' && !escaped {
-            double_count += 1;
-        }
-    }
-
-    single_count % 2 == 0 && double_count % 2 == 0
-}
-
 fn needs_user_arguments(file_type: FileType) -> bool {
     matches!(
         file_type,
@@ -96,6 +79,8 @@ fn prompt_line(label: &str) -> Result<String, String> {
 }
 
 fn collect_user_arguments(file_type: FileType) -> Result<UserArguments, String> {
+    const MAX_ARG_LENGTH: usize = 1024;
+
     let mut args = UserArguments::default();
 
     if !needs_user_arguments(file_type) {
@@ -106,13 +91,15 @@ fn collect_user_arguments(file_type: FileType) -> Result<UserArguments, String> 
 
     if file_type != FileType::WindowsExecutable {
         args.linux_args = prompt_line("\nLinux: ")?;
+        if args.linux_args.len() > MAX_ARG_LENGTH {
+            return Err("Input Error: Linux arguments exceed maximum length.".to_string());
+        }
     }
     if file_type != FileType::LinuxExecutable {
         args.windows_args = prompt_line("\nWindows: ")?;
-    }
-
-    if !has_balanced_quotes(&args.linux_args) || !has_balanced_quotes(&args.windows_args) {
-        return Err("Arguments Error: Quotes mismatch. Check arguments and try again.".to_string());
+        if args.windows_args.len() > MAX_ARG_LENGTH {
+            return Err("Input Error: Windows arguments exceed maximum length.".to_string());
+        }
     }
 
     Ok(args)
@@ -158,7 +145,7 @@ The site will either refuse to upload your image or it will convert your image t
 
 Dimensions:
 
-The following dimension size limits are specific to pdvzip and not necessarily the extact hosting site's size limits.
+The following dimension size limits are specific to pdvzip and not necessarily the exact hosting site's size limits.
 
 PNG-32/24 (Truecolor)
 
@@ -214,6 +201,9 @@ fn run_build(build_args: &BuildArgs) -> Result<(), String> {
     let mut archive_vec =
         file_io::read_file(&build_args.archive_file_path, FileTypeCheck::ArchiveFile)?;
 
+    image::optimize_image(&mut image_vec)?;
+    let original_image_size = image_vec.len();
+
     let is_zip_file = file_io::has_file_extension(&build_args.archive_file_path, &[".zip"]);
     if archive_vec.len() < 12 {
         return Err("Archive File Error: Invalid file size.".to_string());
@@ -229,9 +219,6 @@ fn run_build(build_args: &BuildArgs) -> Result<(), String> {
     let user_args = collect_user_arguments(file_type)?;
 
     let script_vec = script::build_extraction_script(file_type, &first_filename, &user_args)?;
-
-    image::optimize_image(&mut image_vec)?;
-    let original_image_size = image_vec.len();
 
     assembly::embed_chunks(&mut image_vec, script_vec, archive_vec, original_image_size)?;
 
@@ -277,7 +264,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildArgs, Command, has_balanced_quotes, parse_cli, usage};
+    use super::{BuildArgs, Command, parse_cli, usage};
 
     fn vec_args(items: &[&str]) -> Vec<String> {
         items.iter().map(|v| (*v).to_string()).collect()
@@ -310,12 +297,5 @@ mod tests {
         )
         .expect_err("should fail");
         assert_eq!(err, usage("pdvzip_rs"));
-    }
-
-    #[test]
-    fn quote_balance_logic() {
-        assert!(has_balanced_quotes(r#"--a "b c" 'd'"#));
-        assert!(has_balanced_quotes(r#"--a \"quote\""#));
-        assert!(!has_balanced_quotes(r#"--a "b c"#));
     }
 }
